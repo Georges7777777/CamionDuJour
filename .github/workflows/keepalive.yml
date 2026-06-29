@@ -1,0 +1,21 @@
+# .github/workflows/keepalive.yml
+# Maintient le projet Supabase actif (offre gratuite : pause après 7 jours d'inactivité).
+
+name: Supabase keepalive
+
+on:
+  schedule:
+    - cron: "23 6 * * *"      # tous les jours vers 06h23 UTC
+  workflow_dispatch:           # permet aussi de lancer le ping à la main
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping de l'API Supabase
+        run: |
+          URL="https://lpdbgndggutgqwnxgqtv.supabase.co/rest/v1/camions?select=id&limit=1"
+          ANON="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxwZGJnbmRnZ3V0Z3F3bnhncXR2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2OTQ3NjksImV4cCI6MjA5ODI3MDc2OX0.ty82uHZgalFubWjn8-mU-SG7KvyhDqOQMT5LVLMFv9c"
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" "$URL" -H "apikey: $ANON" -H "Authorization: Bearer $ANON")
+          echo "Réponse Supabase : HTTP $CODE"
+          test "$CODE" = "200"
