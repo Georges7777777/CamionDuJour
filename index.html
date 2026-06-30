@@ -86,6 +86,11 @@
   .date-row{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--ink-2)}
   .date-row input[type=date]{flex:0 0 auto;font-size:14px;padding:9px 11px}
   .date-row a{color:var(--accent);font-weight:700;text-decoration:none;cursor:pointer;font-size:12px}
+  .dayfilter{margin-top:12px}
+  .dftoggle{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line-2);background:#fff;color:var(--ink-2);font-family:inherit;font-weight:600;font-size:13px;padding:8px 13px;border-radius:999px;cursor:pointer}
+  .dftoggle .box{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:5px;border:1.5px solid var(--line-2);font-size:11px;line-height:1;color:transparent}
+  .dftoggle.on{color:var(--accent-d);border-color:var(--accent);background:var(--accent-wash)}
+  .dftoggle.on .box{background:var(--accent);border-color:var(--accent);color:#fff}
   .hint{font-size:12px;color:var(--muted);margin-top:6px}
 
   .chips{display:flex;gap:7px;overflow-x:auto;padding:2px 2px 4px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
@@ -222,7 +227,7 @@
         <input type="text" id="placeInput" placeholder="Saint-Malo, ou 35400" autocomplete="off">
         <button class="btn" id="placeGo">Chercher</button>
       </div>
-      <div class="hint">Nom de commune ou code postal à 5 chiffres.</div>
+      <div class="hint">Adresse précise, commune, ou code postal à 5 chiffres.</div>
     </div>
 
     <div class="lblrow"><label class="lbl">Type de cuisine</label></div>
@@ -233,6 +238,7 @@
         <select id="radius"><option value="5">5 km</option><option value="10" selected>10 km</option><option value="20">20 km</option><option value="40">40 km</option></select></div>
       <div class="date-row"><span>Pour le</span><input type="date" id="dateInput"><a id="dateToday">aujourd’hui</a></div>
     </div>
+    <div class="dayfilter"><button class="dftoggle on" id="onlyDayBtn"><span class="box">✓</span>N'afficher que les camions présents ce jour</button></div>
 
     <button class="btn full" id="geoGo">Trouver les food trucks près de moi</button>
     <div class="community">
@@ -269,6 +275,7 @@
 <dialog id="addDlg"><div class="dlg-in">
   <h3 id="addTitle">Ajouter un camion</h3>
   <p class="modnote" id="modNote">ℹ️ Les informations et photos ajoutées sont <b>relues et modérées</b> avant d'être visibles publiquement. Merci de ne renseigner que des contenus appropriés et que vous êtes en droit de partager.</p>
+  <p class="modnote" id="dupNote" style="display:none">📋 Duplication : le nom, la cuisine, le téléphone, les horaires et les photos sont <b>repris automatiquement</b>. Indiquez seulement le <b>nouveau lieu</b> et cochez les <b>jours</b> concernés.</p>
   <div class="field"><label class="lbl" for="t_name">Nom du camion</label>
     <input type="text" id="t_name" placeholder="Chez Momo" autocomplete="off"></div>
   <div class="field"><label class="lbl">Type de cuisine</label>
@@ -416,13 +423,13 @@ const sameDay=(a,b)=>a.getFullYear()===b.getFullYear()&&a.getMonth()===b.getMont
 const CUISINES=[
   {id:"tout",label:"Tout"},
   {id:"pizza",label:"Pizza",osm:["pizza"]},
-  {id:"portugais",label:"Portugaise",osm:["portuguese"]},
   {id:"galettes",label:"Galettes & crêpes",osm:["crepe","creperie","galette","breton"]},
   {id:"burger",label:"Burger",osm:["burger"]},
   {id:"kebab",label:"Kebab",osm:["kebab"]},
   {id:"asiatique",label:"Asiatique",osm:["asian","chinese","japanese","sushi","thai","vietnamese","wok","korean","noodle"]},
   {id:"oriental",label:"Couscous & oriental",osm:["couscous","moroccan","oriental","lebanese","tunisian","algerian"]},
   {id:"espagnol",label:"Paella & espagnol",osm:["paella","spanish","tapas"]},
+  {id:"portugais",label:"Portugaise",osm:["portuguese"]},
   {id:"antillais",label:"Antillais & créole",osm:["caribbean","creole","antillean"]},
   {id:"friterie",label:"Friterie",osm:["friture","fries","chips","fish_and_chips","frite"]},
   {id:"rotisserie",label:"Rôtisserie",osm:["chicken","rotisserie","grill"]},
@@ -448,7 +455,7 @@ const local={read(){try{return JSON.parse(localStorage.getItem("camions")||"[]")
 
 let mode="geo", origin=null, map=null, markers=[], pickedDays=new Set(), pickedCuis="autre";
 let activeCuis="tout", lastResults=[], isAdmin=false, editId=null, selectedDate=new Date();
-let replaceCtx=null;
+let replaceCtx=null, onlyDay=true, osmState="idle", formMode="add", dupMedia=null;
 
 /* ---------- images ---------- */
 function fileToDataURL(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(new Error("img"));r.readAsDataURL(file);});}
@@ -485,7 +492,7 @@ function buildChips(){
   $("#chips").querySelectorAll(".chip").forEach(b=>b.addEventListener("click",()=>{
     activeCuis=b.dataset.c;
     $("#chips").querySelectorAll(".chip").forEach(x=>x.classList.toggle("on",x===b));
-    render(lastResults);drawMarkers(filterCuis(lastResults));}));
+    render();drawMarkers(visibleList());updateStatus();}));
 }
 function buildCuisPick(){
   const pick=CUISINES.filter(c=>c.id!=="tout");
@@ -494,16 +501,19 @@ function buildCuisPick(){
     pickedCuis=b.dataset.c;$("#cuisPick").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));}));
 }
 function filterCuis(list){if(activeCuis==="tout")return list;return list.filter(t=>(t.cat||t.cuisine||"autre")===activeCuis);}
+function dayFiltered(list){if(!onlyDay)return list;return list.filter(t=>t.source!=="community"?true:presentOn(t,selectedDate));}
+function visibleList(){return dayFiltered(filterCuis(lastResults));}
+function dateLabel(){return sameDay(selectedDate,new Date())?"aujourd’hui":"le "+DAYS[selectedDate.getDay()]+" "+selectedDate.toLocaleDateString("fr-FR",{day:"numeric",month:"short"});}
 
-/* ---------- géocodage ---------- */
+/* ---------- géocodage (Base Adresse Nationale : adresses précises + CP) ---------- */
 async function geocodeFR(q){
-  q=(q||"").trim();if(!q)throw new Error("Indiquez une commune ou un code postal.");
-  const isCP=/^\d{5}$/.test(q);
-  const url=isCP?`https://geo.api.gouv.fr/communes?codePostal=${q}&fields=nom,centre,codeDepartement&format=json`
-                :`https://geo.api.gouv.fr/communes?nom=${encodeURIComponent(q)}&fields=nom,centre,codeDepartement&boost=population&limit=1&format=json`;
+  q=(q||"").trim();if(!q)throw new Error("Indiquez une adresse, une commune ou un code postal.");
+  const url=`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(q)}&limit=1`;
   const r=await fetch(url);if(!r.ok)throw new Error("Service de localisation indisponible.");
-  const j=await r.json();if(!j.length||!j[0].centre)throw new Error("Commune introuvable. Vérifiez l'orthographe ou le code postal.");
-  const c=j[0];return {lat:c.centre.coordinates[1],lon:c.centre.coordinates[0],label:`${c.nom} (${c.codeDepartement})`};
+  const j=await r.json();const f=j.features&&j.features[0];
+  if(!f||!f.geometry)throw new Error("Adresse introuvable. Précisez, ex. « 2 place de l'Église, Plouasne » ou « 35400 ».");
+  const [lon,lat]=f.geometry.coordinates;const p=f.properties||{};
+  return {lat,lon,label:p.label||p.city||q};
 }
 
 /* ---------- communauté ---------- */
@@ -605,6 +615,7 @@ function card(t,isNearest){
     b.push(`<button data-arep="${t.id}" data-kind="photo">Remplacer photo</button>`);
     b.push(`<button data-arep="${t.id}" data-kind="menu">Remplacer carte</button>`);
     b.push(`<button data-aedit="${t.id}">Modifier infos</button>`);
+    b.push(`<button class="ok" data-adup="${t.id}">Dupliquer (autre lieu/jour)</button>`);
     if((t.report_count||0)>0)b.push(`<button data-arst="${t.id}">Reset signalements</button>`);
     b.push(`<button class="danger" data-adel="${t.id}">Supprimer la fiche</button>`);
     adm=`<div class="adm">${b.join("")}</div>`;
@@ -629,20 +640,25 @@ function wireCards(scope){
   scope.querySelectorAll("[data-adelp]").forEach(b=>b.onclick=()=>admDeletePhotos(b.dataset.adelp));
   scope.querySelectorAll("[data-arep]").forEach(b=>b.onclick=()=>admStartReplace(b.dataset.arep,b.dataset.kind));
   scope.querySelectorAll("[data-aedit]").forEach(b=>b.onclick=()=>admEdit(b.dataset.aedit));
+  scope.querySelectorAll("[data-adup]").forEach(b=>b.onclick=()=>admDuplicate(b.dataset.adup));
   scope.querySelectorAll("[data-arst]").forEach(b=>b.onclick=()=>admResetReports(b.dataset.arst));
   scope.querySelectorAll("[data-adel]").forEach(b=>b.onclick=()=>admDelete(b.dataset.adel));
 }
 
-function render(all){
-  const list=filterCuis(all);
-  let com=list.filter(t=>t.source==="community"), osm=list.filter(t=>t.source==="osm");
-  com=com.slice().sort((a,b)=>(presentOn(b,selectedDate)-presentOn(a,selectedDate))||(a._km-b._km));
+function render(){
+  const list=visibleList();
+  const com=list.filter(t=>t.source==="community").sort((a,b)=>(presentOn(b,selectedDate)-presentOn(a,selectedDate))||(a._km-b._km));
+  const osm=list.filter(t=>t.source==="osm");
+  const osmLoading=osmState==="loading";
   let html="";
   if(com.length){html+=`<div class="shead"><span class="lab accent">Communauté</span><span class="count">${com.length}</span></div>`;com.forEach((t,i)=>html+=card(t,i===0));}
-  if(osm.length){html+=`<div class="shead"><h2>À proximité</h2><span class="lab">OpenStreetMap</span><span class="count">${osm.length} pts</span></div>`;osm.forEach((t,i)=>html+=card(t,i===0&&!com.length));}
-  if(!com.length&&!osm.length){
+  if(osm.length||osmLoading){
+    html+=`<div class="shead"><h2>Autres points à proximité</h2><span class="lab">OpenStreetMap${osmLoading?" · recherche…":""}</span>${osm.length?`<span class="count">${osm.length} pts</span>`:""}</div>`;
+    osm.forEach((t,i)=>html+=card(t,i===0&&!com.length));}
+  if(!com.length&&!osm.length&&!osmLoading){
     const f=activeCuis!=="tout"?` en « ${cuisLabel(activeCuis)} »`:"";
-    html=`<div class="empty"><b>Aucun camion trouvé${f}</b>Élargissez la zone, changez de type de cuisine, ou ajoutez le camion que vous connaissez — toute la communauté en profitera.</div>`;}
+    const d=onlyDay?` présent ${dateLabel()}`:"";
+    html=`<div class="empty"><b>Aucun camion${f}${d} ici</b>${onlyDay?"Changez de date, ou décochez « présents ce jour seulement ». ":""}Élargissez la zone, ou ajoutez le camion que vous connaissez — toute la communauté en profitera.</div>`;}
   $("#results").innerHTML=html;
   wireCards($("#results"));
 }
@@ -683,17 +699,32 @@ async function runSearch(opts={}){
   if(fromMap){const b=getMap().getBounds();box={minLat:b.getSouth(),maxLat:b.getNorth(),minLon:b.getWest(),maxLon:b.getEast()};}
   else box=boxFromRadius(origin.lat,origin.lon,radius);
   const osmKm=fromMap?Math.min(KM(origin.lat,origin.lon,box.maxLat,box.maxLon),20):radius;
-  let com=[],osm=[];
-  try{com=(await fetchCommunityBox(box)).map(t=>({...t,_km:KM(origin.lat,origin.lon,t.lat,t.lon)}))
+  const reqOrigin=origin;
+  // 1) Communauté (rapide) — affichage immédiat
+  let com=[];
+  try{com=(await fetchCommunityBox(box)).map(t=>({...t,_km:KM(reqOrigin.lat,reqOrigin.lon,t.lat,t.lon)}))
         .filter(t=>!fromMap?t._km<=radius:true).sort((a,b)=>a._km-b._km);}catch(e){}
-  try{osm=(await fetchOSM(origin.lat,origin.lon,osmKm)).map(t=>({...t,_km:KM(origin.lat,origin.lon,t.lat,t.lon)}))
-        .filter(t=>!fromMap?t._km<=radius:true).sort((a,b)=>a._km-b._km).slice(0,30);}catch(e){}
-  lastResults=[...com,...osm];
-  const shown=filterCuis(lastResults);
-  setStatus(shown.length
-    ? `<b>${shown.filter(t=>t.source==="community").length}</b> communauté · <b>${shown.filter(t=>t.source==="osm").length}</b> OSM autour de <b>${esc(origin.label||"cette zone")}</b>`
-    : `Rien trouvé${activeCuis!=="tout"?" en « "+cuisLabel(activeCuis)+" »":""} dans cette zone.`);
-  render(lastResults);showMapResults(shown,!fromMap);
+  if(origin!==reqOrigin)return;
+  osmState="loading";lastResults=com.slice();
+  render();showMapResults(visibleList(),!fromMap);updateStatus();
+  // 2) OSM (lent) — en arrière-plan, on l'ajoute quand il arrive
+  fetchOSM(reqOrigin.lat,reqOrigin.lon,osmKm).then(arr=>{
+    if(origin!==reqOrigin)return;
+    const osm=arr.map(t=>({...t,_km:KM(reqOrigin.lat,reqOrigin.lon,t.lat,t.lon)}))
+      .filter(t=>!fromMap?t._km<=radius:true).sort((a,b)=>a._km-b._km).slice(0,30);
+    osmState="done";lastResults=[...com,...osm];render();showMapResults(visibleList(),false);updateStatus();
+  }).catch(()=>{if(origin===reqOrigin){osmState="error";render();updateStatus();}});
+}
+function updateStatus(){
+  const shown=visibleList();
+  const c=shown.filter(t=>t.source==="community").length, o=shown.filter(t=>t.source==="osm").length;
+  let s=`<b>${c}</b> camion${c>1?"s":""} ${onlyDay?"présent"+(c>1?"s":"")+" "+dateLabel():"(communauté)"}`;
+  if(osmState==="loading")s+=` · <span class="spin" style="margin:0 5px 0 2px"></span>points à proximité…`;
+  else if(osmState==="done"&&o)s+=` · ${o} à proximité`;
+  else if(osmState==="error")s+=` · à proximité indisponible`;
+  if(origin&&origin.label)s+=` — <b>${esc(origin.label)}</b>`;
+  if(!c&&osmState!=="loading"&&!o)s=`Aucun camion${onlyDay?" présent "+dateLabel():""} dans cette zone.`;
+  setStatus(s);
 }
 function reRun(){runSearch({fromMap:mode==="map"});}
 
@@ -705,7 +736,7 @@ $("#geoGo").addEventListener("click",()=>{
     ()=>setStatus("Position refusée. Autorisez la localisation, ou cherchez par ville / code postal."),
     {enableHighAccuracy:true,timeout:10000,maximumAge:60000});
 });
-async function doPlace(){try{setStatus(`<span class="spin"></span>Localisation de la commune…`);
+async function doPlace(){try{setStatus(`<span class="spin"></span>Localisation de l'adresse…`);
   origin=await geocodeFR($("#placeInput").value);runSearch();}catch(e){setStatus(esc(e.message));}}
 $("#placeGo").addEventListener("click",doPlace);
 $("#placeInput").addEventListener("keydown",e=>{if(e.key==="Enter")doPlace();});
@@ -714,54 +745,65 @@ $("#searchHereBtn").addEventListener("click",()=>{const c=getMap().getCenter();o
 
 /* ---------- date ---------- */
 function setDateInput(d){const z=n=>String(n).padStart(2,"0");$("#dateInput").value=`${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())}`;}
-$("#dateInput").addEventListener("change",e=>{const v=e.target.value;if(!v)return;selectedDate=new Date(v+"T12:00:00");if(lastResults.length)render(lastResults);});
-$("#dateToday").addEventListener("click",()=>{selectedDate=new Date();setDateInput(selectedDate);if(lastResults.length)render(lastResults);});
+$("#dateInput").addEventListener("change",e=>{const v=e.target.value;if(!v)return;selectedDate=new Date(v+"T12:00:00");if(lastResults.length){render();drawMarkers(visibleList());updateStatus();}});
+$("#dateToday").addEventListener("click",()=>{selectedDate=new Date();setDateInput(selectedDate);if(lastResults.length){render();drawMarkers(visibleList());updateStatus();}});
+$("#onlyDayBtn").addEventListener("click",()=>{onlyDay=!onlyDay;$("#onlyDayBtn").classList.toggle("on",onlyDay);if(lastResults.length){render();drawMarkers(visibleList());updateStatus();}});
 
 /* ---------- ajout / édition ---------- */
-function openAdd(edit){
-  editId=edit?edit.id:null;
-  $("#addTitle").textContent=edit?"Modifier la fiche":"Ajouter un camion";
-  $("#modNote").style.display=edit?"none":"block";
-  $("#t_name").value=edit?.name||"";
-  $("#t_place").value=edit?.addr||"";
-  $("#t_hours").value=edit?.hours||"";
-  $("#t_phone").value=edit?.phone||"";
-  $("#t_contrib").value=edit?.contributor||"";
+function openAdd(record, m){
+  formMode=m||"add";
+  editId=(formMode==="edit")?record.id:null;
+  dupMedia=(formMode==="duplicate")?{photo_url:record.photo_url||null,menu_url:record.menu_url||null}:null;
+  const titles={add:"Ajouter un camion",edit:"Modifier la fiche",duplicate:"Dupliquer — autre lieu / jour"};
+  $("#addTitle").textContent=titles[formMode];
+  $("#modNote").style.display=formMode==="add"?"block":"none";
+  $("#dupNote").style.display=formMode==="duplicate"?"block":"none";
+  const src=(formMode==="add")?null:record;
+  $("#t_name").value=src?.name||"";
+  $("#t_place").value=(formMode==="duplicate")?"":(src?.addr||"");   // nouveau lieu à saisir
+  $("#t_hours").value=src?.hours||"";
+  $("#t_phone").value=src?.phone||"";
+  $("#t_contrib").value=src?.contributor||"";
   $("#t_photo").value="";$("#t_menu").value="";
-  pickedDays=new Set(edit?.days||[]);pickedCuis=edit?.cuisine||"autre";
+  pickedDays=new Set((formMode==="duplicate")?[]:(src?.days||[]));   // nouveaux jours à cocher
+  pickedCuis=src?.cuisine||"autre";
   $("#daysPick").querySelectorAll("button").forEach(b=>b.classList.toggle("on",pickedDays.has(+b.dataset.d)));
   $("#cuisPick").querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.c===pickedCuis));
   $("#addErr").textContent="";$("#addDlg").showModal();
 }
-$("#openAdd").addEventListener("click",()=>openAdd(null));
+$("#openAdd").addEventListener("click",()=>openAdd(null,"add"));
 $("#addCancel").addEventListener("click",()=>$("#addDlg").close());
 $("#daysPick").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;const d=+b.dataset.d;
   if(pickedDays.has(d)){pickedDays.delete(d);b.classList.remove("on");}else{pickedDays.add(d);b.classList.add("on");}});
 $("#addSave").addEventListener("click",async()=>{
   const name=$("#t_name").value.trim(),place=$("#t_place").value.trim(),err=$("#addErr");
   if(!name)return err.textContent="Donnez un nom au camion.";
-  if(!place)return err.textContent="Indiquez une commune ou une adresse.";
+  if(!place)return err.textContent="Indiquez une adresse, une commune ou un code postal.";
   err.innerHTML=`<span class="spin"></span>Enregistrement…`;
-  let g;try{g=await geocodeFR(place);}catch(e){return err.textContent="Lieu introuvable : essayez « commune » ou « code postal ».";}
+  let g;try{g=await geocodeFR(place);}catch(e){return err.textContent="Lieu introuvable : précisez l'adresse, la commune ou le code postal.";}
   const photoFile=$("#t_photo").files[0],menuFile=$("#t_menu").files[0];
+  const base={name,cuisine:pickedCuis,lat:g.lat,lon:g.lon,addr:place,days:[...pickedDays],
+    hours:$("#t_hours").value.trim(),phone:$("#t_phone").value.trim(),contributor:$("#t_contrib").value.trim()||null};
   try{
-    if(editId){ // admin : update
-      const patch={name,cuisine:pickedCuis,lat:g.lat,lon:g.lon,addr:place,days:[...pickedDays],hours:$("#t_hours").value.trim(),phone:$("#t_phone").value.trim(),contributor:$("#t_contrib").value.trim()||null};
+    if(formMode==="edit"){
+      const patch={...base};
       if(photoFile)patch.photo_url=await uploadPhoto(editId,"photo",photoFile);
-      if(menuFile)patch.menu_url=await uploadPhoto(editId,"menu",menuFile);
+      if(menuFile) patch.menu_url=await uploadPhoto(editId,"menu",menuFile);
       const {error}=await sb.from("camions").update(patch).eq("id",editId);if(error)throw error;
     }else{
       const id=uuid();let photo_url=null,menu_url=null;
-      if(photoFile)photo_url=sb?await uploadPhoto(id,"photo",photoFile):await fileToDataURL(photoFile);
-      if(menuFile) menu_url =sb?await uploadPhoto(id,"menu",menuFile):await fileToDataURL(menuFile);
-      const rec={id,name,cuisine:pickedCuis,lat:g.lat,lon:g.lon,addr:place,days:[...pickedDays],
-        hours:$("#t_hours").value.trim(),phone:$("#t_phone").value.trim(),contributor:$("#t_contrib").value.trim()||null,
-        photo_url,menu_url,photo_ok:sb?false:true,confirm_count:0,report_count:0,last_confirmed_at:new Date().toISOString()};
+      if(photoFile)      photo_url=sb?await uploadPhoto(id,"photo",photoFile):await fileToDataURL(photoFile);
+      else if(formMode==="duplicate"&&dupMedia)photo_url=dupMedia.photo_url;   // reprend la photo d'origine
+      if(menuFile)       menu_url =sb?await uploadPhoto(id,"menu",menuFile):await fileToDataURL(menuFile);
+      else if(formMode==="duplicate"&&dupMedia)menu_url =dupMedia.menu_url;
+      const rec={id,...base,photo_url,menu_url,photo_ok:(sb?false:true),confirm_count:0,report_count:0,last_confirmed_at:new Date().toISOString()};
       await addCommunity(rec);
+      // l'admin publie directement (contenu déjà fiable) ; le grand public reste modéré
+      if(isAdmin&&sb&&(photo_url||menu_url)){try{await sb.from("camions").update({photo_ok:true}).eq("id",id);}catch(e){}}
     }
   }catch(e){return err.textContent="Échec de l'enregistrement. Vérifiez la connexion, le SQL et le stockage.";}
-  $("#addDlg").close();editId=null;
-  if(origin)reRun();else setStatus(sb?"Enregistré. Vos infos seront visibles après modération. Lancez une recherche pour les retrouver.":"Camion enregistré (mode local).");
+  $("#addDlg").close();editId=null;formMode="add";dupMedia=null;
+  if(origin)reRun();else setStatus(sb?"Enregistré. Vos infos seront visibles après modération.":"Camion enregistré (mode local).");
 });
 
 /* ---------- admin : auth ---------- */
@@ -789,7 +831,7 @@ $("#yr").addEventListener("click",()=>{const now=Date.now();tapN=(now-tapT<1500)
 if(location.hash==="#admin")setTimeout(openLogin,300);
 
 if(sb){
-  sb.auth.onAuthStateChange((_e,session)=>{isAdmin=!!session;updateAdminUI();if(lastResults.length)render(lastResults);});
+  sb.auth.onAuthStateChange((_e,session)=>{isAdmin=!!session;updateAdminUI();if(lastResults.length)render();});
   sb.auth.getSession().then(({data})=>{isAdmin=!!data.session;updateAdminUI();});
 }
 
@@ -814,7 +856,12 @@ $("#admReplaceInput").addEventListener("change",async e=>{
 async function admEdit(id){
   let t=lastResults.find(x=>x.id===id);
   if(!t&&sb){const {data}=await sb.from("camions").select("*").eq("id",id).single();t=data;}
-  if(t)openAdd(t);
+  if(t)openAdd(t,"edit");
+}
+async function admDuplicate(id){
+  let t=lastResults.find(x=>x.id===id);
+  if(!t&&sb){const {data}=await sb.from("camions").select("*").eq("id",id).single();t=data;}
+  if(t){if($("#modDlg").open)$("#modDlg").close();openAdd(t,"duplicate");}
 }
 
 /* ---------- modération (panneau) ---------- */
@@ -836,6 +883,7 @@ async function loadMod(){
     if((t.photo_url||t.menu_url)&&!t.photo_ok)b.push(`<button class="ok" data-aok="${t.id}">✓ Valider photos</button>`);
     if(t.photo_url||t.menu_url)b.push(`<button data-adelp="${t.id}">Suppr. photos</button>`);
     b.push(`<button data-aedit="${t.id}">Modifier</button>`);
+    b.push(`<button class="ok" data-adup="${t.id}">Dupliquer</button>`);
     if((t.report_count||0)>0)b.push(`<button data-arst="${t.id}">Reset signalements (${t.report_count})</button>`);
     b.push(`<button class="danger" data-adel="${t.id}">Supprimer</button>`);
     return `<div class="mi"><h4>${esc(t.name)}</h4>
