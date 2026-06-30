@@ -273,7 +273,6 @@
     <div class="links">
       <a id="lnMentions">Mentions légales</a>
       <a id="lnPrivacy">Confidentialité (RGPD)</a>
-      <a id="lnCfg">Mode communautaire</a>
     </div>
     <span class="cr">Contact : <a href="mailto:contact@camiondujour.fr">contact@camiondujour.fr</a> — camiondujour.fr</span>
     <span class="cr">© <b id="yr"></b> Georges Viana — Le Camion du Jour. Tous droits réservés.</span>
@@ -372,8 +371,7 @@ const SUPABASE_ANON = "eyJhbGciOiJ...";</pre>
   <div class="legal">
     <h4>Éditeur</h4>
     <p>Le présent service « Le Camion du Jour » est édité par <b>Georges Viana</b>.<br>
-    Contact : <a href="mailto:contact@camiondujour.fr">contact@camiondujour.fr</a>.<br>
-    <span class="ph">[Le cas échéant, si édité au nom de la société : SAS NEW-D — SIREN/SIRET [n°], siège social [adresse].]</span></p>
+    Contact : <a href="mailto:contact@camiondujour.fr">contact@camiondujour.fr</a>.</p>
     <h4>Directeur de la publication</h4>
     <p>Georges Viana.</p>
     <h4>Hébergement</h4>
@@ -389,7 +387,6 @@ const SUPABASE_ANON = "eyJhbGciOiJ...";</pre>
     <h4>Données tierces</h4>
     <p>Données cartographiques © les contributeurs OpenStreetMap (licence ODbL) ; fonds de carte © CARTO.
     Géocodage : API Géo (Etalab, licence ouverte). Les fiches « OpenStreetMap » sont fournies à titre indicatif.</p>
-    <p class="disc">Modèle à compléter et à vérifier (notamment le SIRET si l'édition est portée par SAS NEW-D). Ne constitue pas un conseil juridique.</p>
   </div>
   <div class="dlg-actions"><button class="btn" data-close>Fermer</button></div>
 </div></dialog>
@@ -416,7 +413,6 @@ const SUPABASE_ANON = "eyJhbGciOiJ...";</pre>
     <h4>Vos droits</h4>
     <p>Accès, rectification, effacement, opposition. Pour exercer ces droits ou demander un retrait :
     <a href="mailto:contact@camiondujour.fr">contact@camiondujour.fr</a>. Réclamation possible auprès de la CNIL (cnil.fr).</p>
-    <p class="disc">Modèle indicatif à adapter ; ne constitue pas un conseil juridique.</p>
   </div>
   <div class="dlg-actions"><button class="btn" data-close>Fermer</button></div>
 </div></dialog>
@@ -1017,7 +1013,6 @@ $("#modClose").addEventListener("click",()=>$("#modDlg").close());
 $("#cfgLink").addEventListener("click",e=>{e.preventDefault();$("#howDlg").showModal();});
 $("#cfgHow").addEventListener("click",()=>$("#howDlg").showModal());
 $("#howClose").addEventListener("click",()=>$("#howDlg").close());
-$("#lnCfg").addEventListener("click",()=>$("#howDlg").showModal());
 $("#lnMentions").addEventListener("click",()=>$("#mentionsDlg").showModal());
 $("#lnPrivacy").addEventListener("click",()=>$("#privacyDlg").showModal());
 document.querySelectorAll("[data-close]").forEach(b=>b.addEventListener("click",()=>b.closest("dialog").close()));
