@@ -91,6 +91,16 @@
   .dftoggle .box{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:5px;border:1.5px solid var(--line-2);font-size:11px;line-height:1;color:transparent}
   .dftoggle.on{color:var(--accent-d);border-color:var(--accent);background:var(--accent-wash)}
   .dftoggle.on .box{background:var(--accent);border-color:var(--accent);color:#fff}
+  .geores{display:flex;flex-direction:column;gap:6px;margin-top:9px}
+  .geores button{text-align:left;border:1px solid var(--line-2);background:#fff;border-radius:9px;padding:9px 11px;font-family:inherit;font-size:13px;color:var(--ink);cursor:pointer;line-height:1.35}
+  .geores button:hover{border-color:var(--accent);background:var(--accent-wash)}
+  .geores button small{display:block;color:var(--muted);font-size:11px;margin-top:1px}
+  .geores .none{font-size:12.5px;color:var(--muted);padding:2px}
+  .addmapwrap{border:1px solid var(--line-2);border-radius:11px;overflow:hidden}
+  #addMap{height:200px;background:#eee}
+  .loclabel{font-size:12.5px;color:var(--ink-2);margin-top:9px;line-height:1.4}
+  .loclabel.set{color:var(--green);font-weight:600}
+  .loclabel.set b{color:var(--ink)}
   .hint{font-size:12px;color:var(--muted);margin-top:6px}
 
   .chips{display:flex;gap:7px;overflow-x:auto;padding:2px 2px 4px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
@@ -280,9 +290,25 @@
     <input type="text" id="t_name" placeholder="Chez Momo" autocomplete="off"></div>
   <div class="field"><label class="lbl">Type de cuisine</label>
     <div class="cuis-pick" id="cuisPick"></div></div>
-  <div class="field"><label class="lbl" for="t_place">Emplacement (commune ou adresse)</label>
-    <input type="text" id="t_place" placeholder="Place de l'église, Cancale" autocomplete="off">
-    <div class="hint">Situé automatiquement via les référentiels français.</div></div>
+  <div class="field"><label class="lbl" for="t_place">Emplacement — adresse</label>
+    <div class="inrow">
+      <input type="text" id="t_place" placeholder="2 place de l'Église, Plouasne" autocomplete="off">
+      <button class="btn sm" id="geoBtn" type="button">Rechercher</button>
+    </div>
+    <div class="hint">Tapez l'adresse, cliquez « Rechercher », puis choisissez le bon résultat.</div>
+    <div id="geoResults" class="geores"></div>
+  </div>
+  <div class="field"><label class="lbl" for="t_coords">Ou coordonnées GPS (latitude, longitude)</label>
+    <div class="inrow">
+      <input type="text" id="t_coords" placeholder="48.6493, -2.0257" autocomplete="off" inputmode="decimal">
+      <button class="btn sm ghost" id="coordBtn" type="button">Placer</button>
+    </div>
+    <div class="hint">Depuis Google Maps : clic droit sur le point → cliquez les chiffres pour les copier.</div>
+  </div>
+  <div class="field">
+    <div class="addmapwrap"><div id="addMap"></div></div>
+    <div id="locLabel" class="loclabel">Aucun point sélectionné — cherchez une adresse, collez des coordonnées, ou cliquez sur la carte.</div>
+  </div>
   <div class="field"><label class="lbl" for="t_phone">Téléphone — pour les commandes</label>
     <input type="tel" id="t_phone" placeholder="06 12 34 56 78" autocomplete="off" inputmode="tel"></div>
   <div class="field"><label class="lbl">Jours de présence</label>
@@ -456,6 +482,7 @@ const local={read(){try{return JSON.parse(localStorage.getItem("camions")||"[]")
 let mode="geo", origin=null, map=null, markers=[], pickedDays=new Set(), pickedCuis="autre";
 let activeCuis="tout", lastResults=[], isAdmin=false, editId=null, selectedDate=new Date();
 let replaceCtx=null, onlyDay=true, osmState="idle", formMode="add", dupMedia=null;
+let formLoc=null, addMap=null, addMarker=null;
 
 /* ---------- images ---------- */
 function fileToDataURL(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(new Error("img"));r.readAsDataURL(file);});}
@@ -515,6 +542,58 @@ async function geocodeFR(q){
   const [lon,lat]=f.geometry.coordinates;const p=f.properties||{};
   return {lat,lon,label:p.label||p.city||q};
 }
+async function geocodeMulti(q,n=6){
+  q=(q||"").trim();if(!q)return [];
+  const r=await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(q)}&limit=${n}`);
+  if(!r.ok)return [];
+  const j=await r.json();
+  return (j.features||[]).map(f=>({lat:f.geometry.coordinates[1],lon:f.geometry.coordinates[0],
+    label:f.properties.label,context:f.properties.context||"",ptype:f.properties.type||""}));
+}
+async function reverseFR(lat,lon){
+  try{const r=await fetch(`https://api-adresse.data.gouv.fr/reverse/?lon=${lon}&lat=${lat}&limit=1`);
+    if(!r.ok)return "";const j=await r.json();const f=j.features&&j.features[0];return f?f.properties.label:"";}catch(e){return "";}
+}
+function parseCoords(s){
+  s=String(s||"").trim();if(!s)return null;
+  const parts=s.split(/\s*,\s*|\s+/).filter(Boolean);
+  if(parts.length!==2)return null;
+  const lat=parseFloat(parts[0]),lon=parseFloat(parts[1]);
+  if(isNaN(lat)||isNaN(lon)||Math.abs(lat)>90||Math.abs(lon)>180)return null;
+  return {lat,lon};
+}
+
+/* ---------- carte du formulaire (choix précis du point) ---------- */
+const PIN=L.divIcon({className:"",iconSize:[20,20],iconAnchor:[10,10],
+  html:'<div style="width:18px;height:18px;border-radius:50% 50% 50% 0;background:#C4452C;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.45);transform:rotate(-45deg)"></div>'});
+function getAddMap(){
+  if(!addMap){
+    addMap=L.map("addMap",{zoomControl:true,attributionControl:false}).setView([46.6,2.45],5);
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",{maxZoom:19}).addTo(addMap);
+    addMap.on("click",async e=>{setFormLoc(e.latlng.lat,e.latlng.lng,null,{recenter:false});
+      const lbl=await reverseFR(e.latlng.lat,e.latlng.lng);if(formLoc){formLoc.label=lbl||formLoc.label;if(lbl)$("#t_place").value=lbl;updateLocLabel();}});
+  }
+  return addMap;
+}
+function updateLocLabel(){
+  const el=$("#locLabel");if(!el)return;
+  if(formLoc){el.className="loclabel set";
+    el.innerHTML=`Point retenu : <b>${esc(formLoc.label||"(point sur la carte)")}</b><br>${formLoc.lat.toFixed(5)}, ${formLoc.lon.toFixed(5)} — déplacez le repère pour ajuster.`;}
+  else{el.className="loclabel";el.textContent="Aucun point sélectionné — cherchez une adresse, collez des coordonnées, ou cliquez sur la carte.";}
+}
+function setFormLoc(lat,lon,label,opt={}){
+  formLoc={lat,lon,label:label||(formLoc&&formLoc.label)||""};
+  const mp=getAddMap();
+  if(!addMarker){
+    addMarker=L.marker([lat,lon],{draggable:true,icon:PIN}).addTo(mp);
+    addMarker.on("dragend",async()=>{const p=addMarker.getLatLng();formLoc.lat=p.lat;formLoc.lon=p.lng;updateLocLabel();
+      const lbl=await reverseFR(p.lat,p.lng);if(lbl){formLoc.label=lbl;$("#t_place").value=lbl;}updateLocLabel();});
+  }else addMarker.setLatLng([lat,lon]);
+  if(opt.recenter!==false)mp.setView([lat,lon],opt.zoom||16);
+  setTimeout(()=>mp.invalidateSize(),60);
+  updateLocLabel();
+}
+function clearFormLoc(){formLoc=null;if(addMarker&&addMap){addMap.removeLayer(addMarker);addMarker=null;}updateLocLabel();}
 
 /* ---------- communauté ---------- */
 async function fetchCommunityBox(box){
@@ -677,7 +756,13 @@ function enterMapMode(){
 }
 function drawMarkers(list){
   if(!map)return;markers.forEach(m=>map.removeLayer(m));markers=[];
-  if(origin)markers.push(L.circleMarker([origin.lat,origin.lon],{radius:7,color:"#C4452C",fillColor:"#C4452C",fillOpacity:1,weight:2}).addTo(map));
+  if(origin){
+    // point de référence (ma position / zone) en bleu, distinct des camions rouges
+    markers.push(L.circleMarker([origin.lat,origin.lon],{radius:13,weight:0,fillColor:"#2f7bf6",fillOpacity:.18}).addTo(map));
+    const me=L.circleMarker([origin.lat,origin.lon],{radius:7,color:"#ffffff",weight:3,fillColor:"#2f7bf6",fillOpacity:1}).addTo(map);
+    me.bindPopup(`<b>${esc(origin.label==="ma position"?"Ma position":origin.label||"Point de recherche")}</b>`);
+    markers.push(me);
+  }
   list.forEach(t=>{const col=t.source==="community"?"#C4452C":"#6b7280";
     const mk=L.circleMarker([t.lat,t.lon],{radius:6,color:col,fillColor:col,fillOpacity:.9,weight:1}).addTo(map);
     mk.bindPopup(`<b>${esc(t.name)}</b><br>${cuisLabel(t.cat||t.cuisine||"autre")}${t._km!=null?" · "+fmtKm(t._km):""}`);markers.push(mk);});
@@ -765,24 +850,57 @@ function openAdd(record, m){
   $("#t_phone").value=src?.phone||"";
   $("#t_contrib").value=src?.contributor||"";
   $("#t_photo").value="";$("#t_menu").value="";
+  $("#geoResults").innerHTML="";$("#t_coords").value="";
   pickedDays=new Set((formMode==="duplicate")?[]:(src?.days||[]));   // nouveaux jours à cocher
   pickedCuis=src?.cuisine||"autre";
   $("#daysPick").querySelectorAll("button").forEach(b=>b.classList.toggle("on",pickedDays.has(+b.dataset.d)));
   $("#cuisPick").querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.c===pickedCuis));
   $("#addErr").textContent="";$("#addDlg").showModal();
+  // localisation : la carte n'a une taille que dialogue ouvert
+  clearFormLoc();
+  setTimeout(()=>{
+    const mp=getAddMap();mp.invalidateSize();
+    if(formMode==="edit"&&record&&record.lat!=null)setFormLoc(record.lat,record.lon,record.addr,{zoom:15});
+    else if(formMode==="duplicate"&&record&&record.lat!=null)mp.setView([record.lat,record.lon],12);
+    else mp.setView([46.6,2.45],5);
+    mp.invalidateSize();
+  },90);
 }
 $("#openAdd").addEventListener("click",()=>openAdd(null,"add"));
 $("#addCancel").addEventListener("click",()=>$("#addDlg").close());
+async function doGeoSearch(){
+  const q=$("#t_place").value.trim(),box=$("#geoResults");
+  if(!q){box.innerHTML='<div class="none">Saisissez d\'abord une adresse.</div>';return;}
+  box.innerHTML='<div class="none"><span class="spin"></span> Recherche…</div>';
+  let res=[];try{res=await geocodeMulti(q,6);}catch(e){}
+  if(!res.length){box.innerHTML='<div class="none">Aucun résultat. Précisez (n°, rue, commune) ou utilisez les coordonnées GPS.</div>';return;}
+  box.innerHTML=res.map((r,i)=>`<button type="button" data-i="${i}">${esc(r.label)}<small>${esc(r.context||r.ptype||"")}</small></button>`).join("");
+  box.querySelectorAll("button").forEach(b=>b.onclick=()=>{const r=res[+b.dataset.i];$("#t_place").value=r.label;box.innerHTML="";setFormLoc(r.lat,r.lon,r.label);});
+}
+$("#geoBtn").addEventListener("click",doGeoSearch);
+$("#t_place").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();doGeoSearch();}});
+$("#coordBtn").addEventListener("click",async()=>{
+  const c=parseCoords($("#t_coords").value);
+  if(!c){$("#addErr").textContent="Coordonnées invalides. Format : 48.6493, -2.0257";return;}
+  $("#addErr").textContent="";setFormLoc(c.lat,c.lon,null);
+  const lbl=await reverseFR(c.lat,c.lon);if(formLoc){if(lbl){formLoc.label=lbl;if(!$("#t_place").value)$("#t_place").value=lbl;}updateLocLabel();}
+});
+$("#t_coords").addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();$("#coordBtn").click();}});
 $("#daysPick").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;const d=+b.dataset.d;
   if(pickedDays.has(d)){pickedDays.delete(d);b.classList.remove("on");}else{pickedDays.add(d);b.classList.add("on");}});
 $("#addSave").addEventListener("click",async()=>{
   const name=$("#t_name").value.trim(),place=$("#t_place").value.trim(),err=$("#addErr");
   if(!name)return err.textContent="Donnez un nom au camion.";
-  if(!place)return err.textContent="Indiquez une adresse, une commune ou un code postal.";
+  // localisation : point choisi sur la carte > coordonnées GPS > géocodage du texte
+  let loc=formLoc;
+  if(!loc){const c=parseCoords($("#t_coords").value);if(c)loc=c;}
+  if(!loc&&place){err.innerHTML=`<span class="spin"></span>Localisation…`;try{loc=await geocodeFR(place);}catch(e){loc=null;}}
+  if(!loc)return err.textContent="Indiquez l'emplacement : cherchez l'adresse et choisissez un résultat, collez des coordonnées GPS, ou cliquez sur la carte.";
+  if(loc.lat<41||loc.lat>52||loc.lon<-5.5||loc.lon>9.8)return err.textContent="Le point est hors de France métropolitaine — vérifiez l'adresse ou les coordonnées.";
   err.innerHTML=`<span class="spin"></span>Enregistrement…`;
-  let g;try{g=await geocodeFR(place);}catch(e){return err.textContent="Lieu introuvable : précisez l'adresse, la commune ou le code postal.";}
+  const addrText=place||loc.label||`${loc.lat.toFixed(5)}, ${loc.lon.toFixed(5)}`;
   const photoFile=$("#t_photo").files[0],menuFile=$("#t_menu").files[0];
-  const base={name,cuisine:pickedCuis,lat:g.lat,lon:g.lon,addr:place,days:[...pickedDays],
+  const base={name,cuisine:pickedCuis,lat:loc.lat,lon:loc.lon,addr:addrText,days:[...pickedDays],
     hours:$("#t_hours").value.trim(),phone:$("#t_phone").value.trim(),contributor:$("#t_contrib").value.trim()||null};
   try{
     if(formMode==="edit"){
